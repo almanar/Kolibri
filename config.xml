@@ -2,8 +2,8 @@
 <!--This file represents user settings about package information that will be packaged into vxp(LINKIT 1.0)-->
 <packageinfo>
   <userinfo>
-    <developer>almanar</developer>
-    <appname>dParrot CGMS</appname>
+    <developer>MediaTek Inc</developer>
+    <appname>Demo</appname>
     <appversion>2.0.0</appversion>
     <appid>-1</appid>
     <iconName>
@@ -37,15 +37,14 @@
     <category>UDP</category>
     <category>SysFile</category>
     <category>sso</category>
-    <defaultliblist>Mediatek; Standard; Memory; Framework; Comman</defaultliblist>
+    <defaultliblist>Mediatek; Standard; Basic Type; Memory; Timer; Thread; String Operations; Character Set Convension; File System; Data and Time; Logs; Framework; Process; Resource; Tag; Firmware; Power Management; Smartphone Notification; Command; Driver; Driver Common Layer; ADC; GPIO; I2C; SPI; SIO(UART; USB); EINT; PMU; PWM; Network Protocol; BSD Socket; TCP; UDP; SSL and TLS; HTTPS; GSM; SIM; Telephony; SMS; Cellular; GPRS; GPS; GPS Control; Bluetooth; Connection Manager; Profile SPP; Bluetooth Low Energy; Profile GAT</defaultliblist>
   </APIAuth>
   <targetconfig>
-    <mem>500</mem>
+    <mem>800</mem>
     <supportbg>checked</supportbg>
     <userfont>unchecked</userfont>
     <screenrotate>unchecked</screenrotate>
     <autoadaptable>checked</autoadaptable>
-    <mem>500</mem>
     <usesysmemory>unchecked</usesysmemory>
     <sysdisk>
     </sysdisk>
