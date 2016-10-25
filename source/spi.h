@@ -1,6 +1,6 @@
-#define CS_PIN    13
+#define CS_PIN    18
 #define MOSI_PIN  44
-#define MISO_PIN  18
+#define MISO_PIN  13
 #define CLK_PIN   43
 
 #define SPI_DELAY 0

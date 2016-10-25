@@ -1,10 +1,8 @@
-#include "vmtype.h"
-#include "vmboard.h"
 #include "vmsystem.h"
+#include "vmtype.h"
 #include "vmlog.h"
 #include "vmdcl.h"
 #include "vmdcl_gpio.h"
-#include "vmthread.h"
 
 #include "spi.h"
 
