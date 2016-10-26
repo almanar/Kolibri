@@ -18,11 +18,12 @@
 dexcom_g4_packet dexg4_packet={0};
 VMUINT32 RX_POLL_TIME =0;
 
-static VMUINT8 ASCII_SRC_NAME[6];
+static VMUINT32  RAW_SRC_NAME;
+static VMUINT8  ASCII_SRC_NAME[6];
+
 static VMUINT8  CHAN_HOPP[4]     = {0,100,199,209};
 static VMINT8   CHAN_OFFSET[4]   = {0,0,0,0};//{0xE4, 0xE3, 0xE2, 0xE2};
 static VMUINT32 RX_CH_TIMEOUT[4] = { 500 , 1000 , 1500 , 2100 };
-static VMUINT8 RX_BUFFER[4][21]  = {{0}};
 
 
 VMUINT8  SRC_NAME_TABLE[32] = { '0', '1', '2', '3', '4', '5', '6', '7',
@@ -62,13 +63,6 @@ VMUINT8 bit_reverse_byte (VMUINT8 in)
 	if (in & 0x80)
 		bRet |= 0x01;
 	return bRet;
-}
-
-VMUINT8 min8 (VMUINT8 a, VMUINT8 b)
-{
-	if (a < b)
-		return a;
-	return b;
 }
 
 VMUINT32 get_src_value (VMUINT8 srcVal)
@@ -135,20 +129,28 @@ void dex4_change_channel(VMUINT8 index)
 	while ((cc2500_read_status_reg(REG_MARCSTATE) & 0x1F) != 0x0D) {};
 }
 
-VMUINT dexg4_init(){
+VMBOOL dexg4_set_src(void){
+	if (strlen(CONF_TRANSMITTER_ID)){
+		RAW_SRC_NAME = ascii_to_dexcom_src((char *)CONF_TRANSMITTER_ID);
+		vm_log_info("dexg4_set_src - RAW_SRC_NAME: %lu", RAW_SRC_NAME);
+		return 1;
+	}else{ return 0; }
+}
+
+VMUINT dexg4_init(void){
 	cc2500_init2();
 	cc2500_read_config_regs();
 }
 
-VMUINT8 dexg4_wake(){
+VMUINT8 dexg4_wake(void){
 	return cc2500_send_strobe(CC2500_CMD_SNOP);
 }
 
-VMUINT8 dexg4_sleep(){
+VMUINT8 dexg4_sleep(void){
 	return cc2500_send_strobe(CC2500_CMD_SPWD);
 }
 
-VMUINT8 dexg4_receive(){
+VMUINT8 dexg4_receive(void){
 	vm_log_info("dexg4_recieve");
 	VMUINT8  rx_packet_status = 0;
 	VMUINT8  channel = 0;
@@ -174,8 +176,7 @@ VMUINT8 dexg4_receive(){
 		vm_log_info("len: %d", dexg4_packet.pkt_len);
 		if ( dexg4_packet.pkt_len == 0x12 ){
 			if (get_packet_passed_checksum(dexg4_packet.lqi)){
-				dexcom_src_to_ascii(dexg4_packet.src_addr);
-				if ( strcmp( ASCII_SRC_NAME, CM_TRANSMITTER_ID) == 0 ){
+				if ( dexg4_packet.src_addr == RAW_SRC_NAME ){
 					if (RX_POLL_TIME == 0 && channel == 0){
 						// save timer time - 450 ms
 						RX_POLL_TIME = post_ch_timmer[0] - 450;
@@ -187,7 +188,7 @@ VMUINT8 dexg4_receive(){
 
 				// Filter out unwanted behavior
 				}else{
-					vm_log_info("NOT MY DEX ID: %s", ASCII_SRC_NAME);
+					vm_log_info("NOT MY DEX ID: %lu", dexg4_packet.src_addr);
 					memset(&dexg4_packet, 0, sizeof(dexg4_packet));
 					continue;
 				}
@@ -203,8 +204,7 @@ VMUINT8 dexg4_receive(){
 
 	RX_POLL_TIME = RX_POLL_TIME + 300000;
 
-	vm_log_info("DEX ID: %s", ASCII_SRC_NAME);
-	vm_log_info("Dex id %08x", dexg4_packet.src_addr);
+	vm_log_info("DEX ID: %lu", dexg4_packet.src_addr);
 
 	return rx_packet_status;
 }
@@ -225,7 +225,7 @@ VMUINT8 DUMMY_RX_BUFFER[21] = { 0x12,
 								0xB0,
 								0x40};
 
-VMBOOL dexg4_receive_dummy(){
+VMBOOL dexg4_receive_dummy(void){
 	int channel=0;
 
 	if (RX_POLL_TIME == 0) { delay(5000);}
@@ -236,7 +236,7 @@ VMBOOL dexg4_receive_dummy(){
 	if ( dexg4_packet.pkt_len == 0x12 ){
 		if (get_packet_passed_checksum(dexg4_packet.lqi)){
 			dexcom_src_to_ascii(dexg4_packet.src_addr);
-			if ( strcmp( ASCII_SRC_NAME, CM_TRANSMITTER_ID) == 0 ){
+			if ( dexg4_packet.src_addr == RAW_SRC_NAME ){
 				if (RX_POLL_TIME == 0 && channel == 0){
 					RX_POLL_TIME = milisec() - 475;
 				}
@@ -246,7 +246,7 @@ VMBOOL dexg4_receive_dummy(){
 
 	RX_POLL_TIME = RX_POLL_TIME + 60000;
 
-	vm_log_info("DEX ID: %s", ASCII_SRC_NAME);
+	vm_log_info("DEX ID: %s", dexg4_packet.src_addr);
 	vm_log_info("Dex id %08x", dexg4_packet.src_addr);
 }
 /*-------------------------------Dummy----------------------------------*/

@@ -1,3 +1,7 @@
+#define DEBUG 1
+#define DPRINT(fmt, ...) do { if (DEBUG) vm_log_debug("%s(): ",__func__, __VA_ARGS__); } while (0)
+
+
 #pragma pack(1)
 typedef struct _dexcom_g4_packet
 {

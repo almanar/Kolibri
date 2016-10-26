@@ -11,6 +11,9 @@
 #include "vmpwr.h"
 #include "vmhttps.h"
 #include "vmgsm_gprs.h"
+#include "vmgsm_sms.h"
+#include "vmgsm_sim.h"
+#include "vmgsm_cell.h"
 
 #include "ResID.h"
 
@@ -28,40 +31,41 @@ extern VMUINT32 RX_POLL_TIME;
 extern VMUINT RX_uS_TIMEOUT[4];
 extern dexcom_g4_packet dexg4_packet;
 
-/* Message ID for the thread communication. */
-#define DPARROT_MSG_INIT 		 (VMUINT16)1
-#define DPARROT_MSG_WAIT  		 (VMUINT16)2
-#define DPARROT_MSG_NEW_DATA    (VMUINT16)3
-#define DPARROT_MSG_RESET     (VMUINT16)4
-#define DPARROT_MSG_START        (VMUINT16)5
+/* Message ID for the kolibri main thread communication. */
+#define KOLIBRI_MSG_INIT 		 (VMUINT16)1
+#define KOLIBRI_MSG_WAIT  		 (VMUINT16)2
+#define KOLIBRI_MSG_NEW_DATA    (VMUINT16)3
+#define KOLIBRI_MSG_RESET     (VMUINT16)4
+#define KOLIBRI_MSG_START        (VMUINT16)5
 
 /* Thread handles */
-VM_THREAD_HANDLE dparrot_init_thread = 0;
-VM_THREAD_HANDLE dparrot_main_thread = 0;
-VM_THREAD_HANDLE dparrot_gsm_thread = 0;
+VM_THREAD_HANDLE kolibri_init_thread = 0;
+VM_THREAD_HANDLE kolibri_main_thread = 0;
+VM_THREAD_HANDLE kolibri_gsm_thread = 0;
 
 /* Signal, mutex and shared variable for thread synchronization */
 VMUINT 		 g_variable = 0x5555; /* The global variable for sharing among multi-threads. */
 VM_SIGNAL_ID g_signal;
 vm_mutex_t   g_mutex;
 
-//void dparrot_handle_sysevent(VMINT message, VMINT param);
-//VMUINT32 dparrot_main(VM_THREAD_HANDLE thread_handle, void* user_data);
-//void dparrot_init(void);
-//void dparrot_proxy_callback(void);
+//void kolibri_handle_sysevent(VMINT message, VMINT param);
+//VMUINT32 kolibri_main(VM_THREAD_HANDLE thread_handle, void* user_data);
+//void kolibri_init(void);
+//void kolibri_proxy_callback(void);
 //-----------------------------------------------------------------------------
 
 
-VMUINT8 URL_BUFFER[256];
-
 /*----------------------------------------------HTTP---------------------------------------------*/
 
+VMUINT8 URL_BUFFER[256];
 VMUINT8 g_channel_id;
 VMINT g_read_seg_num;
 
 static void https_send_request_set_channel_rsp_cb(VMUINT32 req_id, VMUINT8 channel_id, VMUINT8 result)
 {
     VMINT ret = -1;
+
+    vm_log_info("HTTP REQ: %s", URL_BUFFER);
 
     ret = vm_https_send_request(
         0,                  				/* Request ID */
@@ -71,8 +75,8 @@ static void https_send_request_set_channel_rsp_cb(VMUINT32 req_id, VMUINT8 chann
         100,                     	        /* bytes of data to be sent in reply at a time. If data is more that this, multiple response would be there */
         (VMSTR)URL_BUFFER,        			/* The request URL */
         strlen(URL_BUFFER),           		/* The request URL length */
-        CM_MY_USER_AGENT,                   /* The request header */
-        strlen(CM_MY_USER_AGENT),           /* The request header length */
+        (VMSTR)CONF_MY_USER_AGENT,            /* The request header */
+        strlen(CONF_MY_USER_AGENT),           /* The request header length */
         NULL,
         0);
 
@@ -121,7 +125,7 @@ static void https_send_read_read_content_rsp_cb(VMUINT16 request_id, VMUINT8 seq
                                                  VMUINT8 *reply_segment, VMUINT32 reply_segment_len)
 {
     VMINT ret = -1;
-    vm_log_debug("reply_content:%s", reply_segment);
+    vm_log_info("reply_content:%s", reply_segment);
     if (more > 0) {
         ret = vm_https_read_content(
             request_id,                                    /* Request ID */
@@ -157,10 +161,10 @@ void set_custom_apn(void)
     vm_gsm_gprs_apn_info_t apn_info;
 
     memset(&apn_info, 0, sizeof(apn_info));
-    strcpy(apn_info.apn, 			CM_CUST_APN);
-    strcpy(apn_info.proxy_address, 	CM_PROXY_ADDRESS);
-    apn_info.proxy_port = 			CM_PROXY_PORT;
-    apn_info.using_proxy = 			CM_USING_PROXY;
+    strcpy(apn_info.apn, 			CONF_CUST_APN);
+    strcpy(apn_info.proxy_address, 	CONF_PROXY_ADDRESS);
+    apn_info.proxy_port = 			CONF_PROXY_PORT;
+    apn_info.using_proxy = 			CONF_USING_PROXY;
     vm_gsm_gprs_set_customized_apn_info(&apn_info);
 }
 
@@ -210,11 +214,43 @@ static void https_send_request(VM_TIMER_ID_NON_PRECISE timer_id, void* user_data
 /*----------------------------------------------HTTP---------------------------------------------*/
 
 
-void dparrot_init(VM_THREAD_HANDLE thread_handle, void* user_data)
+
+/* The callback of sending SMS, for checking if an SMS is sent successfully. */
+void sms_send_callback(vm_gsm_sms_callback_t* callback_data){
+    if(callback_data->action == VM_GSM_SMS_ACTION_SEND){
+        vm_log_info("send sms callback, result = %d", callback_data->result);
+    }
+}
+
+
+/* Sends SMS */
+void sms_send_sms_test(void){
+    VMWCHAR content[100];
+    VMWCHAR num[100];
+    VMINT res = 0;
+    VMINT number_count = 0;
+    VMBOOL result;
+    number_count = vm_gsm_sim_get_card_count();
+    vm_log_info("sms read card count %d", number_count);
+    result = vm_gsm_sim_has_card();
+    vm_log_info("sms read sim card result %d", result);
+    /* Sets SMS content */
+    vm_chset_ascii_to_ucs2(content, sizeof(content), URL_BUFFER);
+    /* Sets recipient's mobile number */
+    vm_chset_ascii_to_ucs2(num, sizeof(num), CONF_MASTER_PHONENUMBER);
+    res = vm_gsm_sms_send(num, content, sms_send_callback, NULL);
+    if(res != 0){
+        vm_log_info("sms send fail!");
+    }
+    vm_log_info("sms send: %d", res);
+}
+
+
+void kolibri_init(VM_THREAD_HANDLE thread_handle, void* user_data)
 {
 	static vm_thread_message_t export_message={0}; /* The message structure */
 	vm_thread_sleep(10000);
-	vm_log_info("dparrot_init");
+	vm_log_info("kolibri_init");
 
 	// Set date and time
 	vm_date_time_t sys_date_time;
@@ -226,16 +262,17 @@ void dparrot_init(VM_THREAD_HANDLE thread_handle, void* user_data)
 	sys_date_time.second = 0;
 	vm_time_set_date_time(&sys_date_time);
 
-	// Send message to start dparrot_main thread
+	// Send message to start kolibri_main thread
 	export_message.message_id = 2000; // SEND HTTP
 	export_message.user_data = (char *)"";
 	vm_thread_send_message(vm_thread_get_main_handle(), &export_message);
 
+	DPRINT("BATTERY LEVEL: %d", vm_pwr_get_battery_level());
 	vm_log_info("init end");
 
 }
 
-VMUINT32 dparrot_main(VM_THREAD_HANDLE thread_handle, void* user_data)
+VMUINT32 kolibri_main(VM_THREAD_HANDLE thread_handle, void* user_data)
 {
 	static vm_thread_message_t export_message={0}; /* The message structure */
 	static vm_thread_message_t main_message={0}; /* The message structure */
@@ -244,84 +281,89 @@ VMUINT32 dparrot_main(VM_THREAD_HANDLE thread_handle, void* user_data)
 	static VMINT8 url_len=0;
 	static VMINT8 missed=0;
 
-	vm_log_info("dparrot main");
-	vm_log_info("dparrot main - main_message: %d", main_message.message_id);
+	vm_log_info("kolibri main");
+	vm_log_info("kolibri main - main_message: %d", main_message.message_id);
 
 	int next=1;
 	while(1){
 		//vm_thread_get_message(&main_message);
 		switch(main_message.message_id)
 		{
-		case DPARROT_MSG_INIT:
-			vm_log_info("dparrot main - init");
-			//dparrot_init();
+		case KOLIBRI_MSG_INIT:
+			vm_log_info("kolibri main - init");
+			DPRINT("TEST %d", 1);
+			dexg4_set_src();
 			dexg4_init();
 			//---
-			next = DPARROT_MSG_START;
+			next = KOLIBRI_MSG_START;
 			break;
 
-		case DPARROT_MSG_START:
-			vm_log_info("dparrot main - start");
+		case KOLIBRI_MSG_START:
+			vm_log_info("kolibri main - start");
 			dexg4_wake();
 			if (dexg4_receive()){
 				missed = 0;
-				next = DPARROT_MSG_NEW_DATA;
+				next = KOLIBRI_MSG_NEW_DATA;
 			}else{
 				// packet missed
-				if (++missed>2){next = DPARROT_MSG_INIT;}
-				else{next = DPARROT_MSG_WAIT;}
+				memset(&URL_BUFFER, 0, sizeof(URL_BUFFER));
+				sms_send_sms_test();
+				if (++missed>2){next = KOLIBRI_MSG_INIT;}
+				else{next = KOLIBRI_MSG_WAIT;}
 			}
 			//---
 			break;
 
-		case DPARROT_MSG_NEW_DATA:
-			vm_log_info("dparrot main - new data");
+		case KOLIBRI_MSG_NEW_DATA:
+			vm_log_info("kolibri main - new data");
+			memset(&URL_BUFFER, 0, sizeof(URL_BUFFER));
 			memset(&parram, 0, sizeof(parram));
-			url_len = sprintf(parram, "?rr=%lu&zi=%lu&pc=%s&lv=%lu&lf=%lu&db=%hhu&ts=%lu&bp=%d",
+			url_len = sprintf(parram, "?rr=%lu&zi=%lu&pc=%s&lv=%lu&lf=%lu&db=%hhu&ts=%lu&ti=%lu&bp=%d",
 					milisec(),
 					dexg4_packet.src_addr,
-					CM_MY_CONTROL_NUMBER,
+					CONF_MY_CONTROL_NUMBER,
 					dexg4_packet.raw_data,
 					dexg4_packet.filtered_data,
 					dexg4_packet.battery,
-					milisec(),
-					(VMINT)vm_pwr_get_battery_level());
+					(milisec() - (RX_POLL_TIME - 300000)),
+					dexg4_packet.transaction_id,
+					70);//(VMINT)vm_pwr_get_battery_level());
 			vm_log_info("PARRAM: %d: %s", url_len, parram);
 
 			url_len = sprintf(URL_BUFFER, "%s%s",
-					CM_MY_WEBSERVICE_URL, parram);
+					CONF_MY_WEBSERVICE_URL, parram);
 
 			/* Sends MESSAGE to the main thread. */
 			export_message.message_id = 2001; // SEND HTTP
 			export_message.user_data = &URL_BUFFER;
-			vm_thread_sleep(10);
+			vm_thread_sleep(50);
 			vm_thread_send_message(vm_thread_get_main_handle(), &export_message);
 
-
 			//---
-			next=DPARROT_MSG_WAIT;
+			next=KOLIBRI_MSG_WAIT;
 			break;
 
-		case DPARROT_MSG_WAIT:
-			vm_log_info("dparrot main - sleep");
+		case KOLIBRI_MSG_WAIT:
+			vm_log_info("kolibri main - sleep");
 
 			dexg4_sleep();
 
 			dtime = RX_POLL_TIME - milisec();
-			vm_log_info("dparrot main - sleep - poll %d", dtime);
+			vm_log_info("kolibri main - sleep - poll %d", dtime);
 			// freeze this thread for x ms
 			vm_signal_timed_wait(g_signal, (VMUINT32)(dtime));
 			//---
-			next = DPARROT_MSG_START;
+			next = KOLIBRI_MSG_START;
 			break;
 
-		case DPARROT_MSG_RESET:
+		case KOLIBRI_MSG_RESET:
 			//---
-			next = 0;
+			RX_POLL_TIME = 0;
+			next = KOLIBRI_MSG_INIT;
 			break;
 
 		default:
-			vm_log_info("dparrot main - default: MSG %d", main_message.message_id);
+			vm_log_info("kolibri main - default: MSG %d", main_message.message_id);
 		}
 		vm_thread_sleep(50);
 		main_message.message_id = next;
@@ -331,7 +373,7 @@ VMUINT32 dparrot_main(VM_THREAD_HANDLE thread_handle, void* user_data)
 
 }
 
-void dparrot_handle_sysevent(VMINT message, VMINT param)
+void kolibri_handle_sysevent(VMINT message, VMINT param)
 {
 	vm_thread_message_t sys_message; /* The message structure */
 
@@ -339,7 +381,7 @@ void dparrot_handle_sysevent(VMINT message, VMINT param)
 	{
 	case VM_EVENT_CREATE:
 		vm_log_info("message for init functionality");
-		dparrot_init_thread = vm_thread_create((vm_thread_callback)dparrot_init,
+		kolibri_init_thread = vm_thread_create((vm_thread_callback)kolibri_init,
 				NULL,
 				130);
 		break;
@@ -348,9 +390,9 @@ void dparrot_handle_sysevent(VMINT message, VMINT param)
 		vm_log_info("message for main functionality");
 		/* Creates a sub-thread with the priority of 126 */
 		g_signal = vm_signal_create();
-		dparrot_main_thread = vm_thread_create((vm_thread_callback)dparrot_main,
+		kolibri_main_thread = vm_thread_create((vm_thread_callback)kolibri_main,
 				NULL, 131);
-		if(dparrot_main_thread == 0)
+		if(kolibri_main_thread == 0)
 		{
 			vm_log_info("create thread failed");
 			return ;
@@ -358,9 +400,9 @@ void dparrot_handle_sysevent(VMINT message, VMINT param)
 		else
 		{
 			vm_log_info("create thread successful");
-			sys_message.message_id = DPARROT_MSG_INIT;
+			sys_message.message_id = KOLIBRI_MSG_INIT;
 			sys_message.user_data = &g_variable;
-			vm_thread_send_message(dparrot_main_thread, &sys_message);
+			vm_thread_send_message(kolibri_main_thread, &sys_message);
 		}
 		break;
 
@@ -370,7 +412,7 @@ void dparrot_handle_sysevent(VMINT message, VMINT param)
 		break;
 
 	case VM_EVENT_QUIT:
-		vm_log_info("dParrot - End.");
+		vm_log_info("kolibri - End.");
 		break;
 
 	}
@@ -380,5 +422,5 @@ void dparrot_handle_sysevent(VMINT message, VMINT param)
 void vm_main(void)
 {
 	/* Registers system event handler */
-	vm_pmng_register_system_event_callback(dparrot_handle_sysevent);
+	vm_pmng_register_system_event_callback(kolibri_handle_sysevent);
 }
